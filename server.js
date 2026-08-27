@@ -3,6 +3,7 @@ const cors = require("cors");
 require("dotenv").config();
 
 const app = express();
+
 const PORT = process.env.PORT || 10000;
 
 app.use(cors());
@@ -17,7 +18,7 @@ app.get("/api/health", (req, res) => {
 });
 
 app.get("/", (req, res) => {
-  res.send("EZEDATA VTU is coming soon.");
+  res.sendFile(__dirname + "/public/index.html");
 });
 
 app.listen(PORT, "0.0.0.0", () => {
