@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EZEDATA - Airtime & Data</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+    }
+
+    body {
+      background: #f5f7fa;
+      color: #222;
+    }
+
+    header {
+      background: #0b7a3b;
+      color: white;
+      padding: 22px 18px;
+      text-align: center;
+    }
+
+    header h1 {
+      font-size: 30px;
+    }
+
+    header p {
+      margin-top: 6px;
+    }
+
+    .container {
+      max-width: 500px;
+      margin: 25px auto;
+      padding: 0 16px;
+    }
+
+    .card {
+      background: white;
+      padding: 22px;
+      border-radius: 14px;
+      box-shadow: 0 3px 15px rgba(0,0,0,0.08);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .tabs button {
+      flex: 1;
+      padding: 13px;
+      border: none;
+      border-radius: 8px;
+      background: #e7e7e7;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .tabs button.active {
+      background: #0b7a3b;
+      color: white;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 7px;
+      font-weight: bold;
+    }
+
+    input, select {
+      width: 100%;
+      padding: 14px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+
+    .buy-btn {
+      width: 100%;
+      margin-top: 22px;
+      padding: 15px;
+      border: none;
+      border-radius: 8px;
+      background: #0b7a3b;
+      color: white;
+      font-size: 17px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .notice {
+      margin-top: 18px;
+      padding: 12px;
+      background: #fff8df;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    footer {
+      text-align: center;
+      padding: 25px;
+      color: #777;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <h1>EZEDATA</h1>
+    <p>Fast & Reliable Airtime and Data</p>
+  </header>
+
+  <div class="container">
+    <div class="card">
+
+      <div class="tabs">
+        <button id="airtimeTab" class="active" onclick="showAirtime()">Airtime</button>
+        <button id="dataTab" onclick="showData()">Data</button>
+      </div>
+
+      <div id="purchaseForm">
+
+        <label>Network</label>
+        <select id="network">
+          <option value="">Select network</option>
+          <option value="mtn">MTN</option>
+          <option value="airtel">Airtel</option>
+          <option value="glo">Glo</option>
+          <option value="9mobile">9mobile</option>
+        </select>
+
+        <label>Phone Number</label>
+        <input
+          type="tel"
+          id="phone"
+          placeholder="08012345678"
+          maxlength="11"
+        >
+
+        <div id="airtimeFields">
+          <label>Airtime Amount</label>
+          <input
+            type="number"
+            id="amount"
+            placeholder="Enter amount"
+            min="50"
+          >
+        </div>
+
+        <div id="dataFields" style="display:none;">
+          <label>Data Plan</label>
+          <select id="dataPlan">
+            <option value="">Select data plan</option>
+            <option>500MB</option>
+            <option>1GB</option>
+            <option>2GB</option>
+            <option>3GB</option>
+            <option>5GB</option>
+            <option>10GB</option>
+          </select>
+        </div>
+
+        <button class="buy-btn" onclick="startPurchase()">
+          Continue to Payment
+        </button>
+
+        <div class="notice">
+          Payments will be processed securely through Paystack.
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    © 2026 EZEDATA. All rights reserved.
+  </footer>
+
+  <script>
+    let purchaseType = "airtime";
+
+    function showAirtime() {
+      purchaseType = "airtime";
+
+      document.getElementById("airtimeTab").classList.add("active");
+      document.getElementById("dataTab").classList.remove("active");
+
+      document.getElementById("airtimeFields").style.display = "block";
+      document.getElementById("dataFields").style.display = "none";
+    }
+
+    function showData() {
+      purchaseType = "data";
+
+      document.getElementById("dataTab").classList.add("active");
+      document.getElementById("airtimeTab").classList.remove("active");
+
+      document.getElementById("airtimeFields").style.display = "none";
+      document.getElementById("dataFields").style.display = "block";
+    }
+
+    function startPurchase() {
+      const network = document.getElementById("network").value;
+      const phone = document.getElementById("phone").value;
+
+      if (!network) {
+        alert("Please select a network.");
+        return;
+      }
+
+      if (!/^0[7-9][0-9]{9}$/.test(phone)) {
+        alert("Please enter a valid Nigerian phone number.");
+        return;
+      }
+
+      if (purchaseType === "airtime") {
+        const amount = document.getElementById("amount").value;
+
+        if (!amount || Number(amount) < 50) {
+          alert("Please enter an airtime amount of at least ₦50.");
+          return;
+        }
+
+        alert("Payment connection will be added next.");
+      } else {
+        const plan = document.getElementById("dataPlan").value;
+
+        if (!plan) {
+          alert("Please select a data plan.");
+          return;
+        }
+
+        alert("Payment connection will be added next.");
+      }
+    }
+  </script>
+
+</body>
+</html>
