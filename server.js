@@ -1,221 +1,291 @@
 const express = require("express");
-const cors = require("cors");
-require("dotenv").config();
+const path = require("path");
 
 const app = express();
-
 const PORT = process.env.PORT || 10000;
 
-// VTpass Sandbox
-const VTPASS_BASE_URL = "https://sandbox.vtpass.com/api";
-
-// Middleware
-app.use(cors());
 app.use(express.json());
-app.use(express.static("public"));
+app.use(express.urlencoded({ extended: true }));
 
+// Serve the website
+app.use(express.static(path.join(__dirname, "public")));
 
-// ========================================
+const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
+const VTPASS_API_KEY = process.env.VTPASS_API_KEY;
+const VTPASS_SECRET_KEY = process.env.VTPASS_SECRET_KEY;
+
+// =========================
 // HEALTH CHECK
-// ========================================
+// =========================
 
 app.get("/api/health", (req, res) => {
   res.json({
-    success: true,
+    status: true,
     message: "EZEDATA server is running"
   });
 });
 
+// =========================
+// PAYSTACK: INITIALIZE PAYMENT
+// =========================
 
-// ========================================
-// VTpass PURCHASE
-// ========================================
-
-app.post("/api/vtpass/purchase", async (req, res) => {
+app.post("/api/paystack/initialize", async (req, res) => {
   try {
-    const {
-      serviceID,
-      amount,
-      phone,
-      variation_code,
-      billersCode
-    } = req.body;
+    const { email, amount } = req.body;
 
-
-    // ----------------------------------------
-    // Validate required fields
-    // ----------------------------------------
-
-    if (!serviceID) {
+    if (!email || !amount) {
       return res.status(400).json({
-        success: false,
-        message: "serviceID is required"
+        status: false,
+        message: "Email and amount are required"
       });
     }
 
-    if (!phone) {
-      return res.status(400).json({
-        success: false,
-        message: "phone is required"
-      });
-    }
-
-    if (!amount && !variation_code) {
-      return res.status(400).json({
-        success: false,
-        message: "amount or variation_code is required"
-      });
-    }
-
-
-    // ----------------------------------------
-    // Check VTpass credentials
-    // ----------------------------------------
-
-    if (
-      !process.env.VTPASS_API_KEY ||
-      !process.env.VTPASS_SECRET_KEY
-    ) {
+    if (!PAYSTACK_SECRET_KEY) {
+      console.error("PAYSTACK_SECRET_KEY is missing");
       return res.status(500).json({
-        success: false,
-        message: "VTpass API credentials are not configured"
+        status: false,
+        message: "Paystack is not configured"
       });
     }
 
+    const numericAmount = Number(amount);
 
-    // ----------------------------------------
-    // Generate unique request ID
-    // ----------------------------------------
+    if (!Number.isFinite(numericAmount) || numericAmount < 100) {
+      return res.status(400).json({
+        status: false,
+        message: "Minimum payment amount is ₦100"
+      });
+    }
 
-    const requestId =
-      "EZEDATA" +
+    const reference =
+      "EZEDATA_" +
       Date.now() +
-      Math.floor(Math.random() * 1000);
-
-
-    // ----------------------------------------
-    // Build VTpass payload
-    // ----------------------------------------
-
-    const payload = {
-      request_id: requestId,
-      serviceID: serviceID,
-      phone: phone
-    };
-
-
-    // Add amount when supplied
-    if (amount) {
-      payload.amount = Number(amount);
-    }
-
-
-    // Add variation code when supplied
-    if (variation_code) {
-      payload.variation_code = variation_code;
-    }
-
-
-    // Add billersCode when supplied.
-    // This is required by some VTpass services,
-    // such as data and cable services.
-    if (billersCode) {
-      payload.billersCode = billersCode;
-    }
-
-
-    // ----------------------------------------
-    // Send purchase request to VTpass
-    // ----------------------------------------
+      "_" +
+      Math.random().toString(36).slice(2, 8).toUpperCase();
 
     const response = await fetch(
-      `${VTPASS_BASE_URL}/pay`,
+      "https://api.paystack.co/transaction/initialize",
       {
         method: "POST",
-
         headers: {
-          "Content-Type": "application/json",
-          "api-key": process.env.VTPASS_API_KEY,
-          "secret-key": process.env.VTPASS_SECRET_KEY
+          Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+          "Content-Type": "application/json"
         },
-
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          email,
+          amount: Math.round(numericAmount * 100),
+          currency: "NGN",
+          reference,
+          callback_url: `${req.protocol}://${req.get("host")}/payment/callback`,
+          metadata: {
+            source: "EZEDATA"
+          }
+        })
       }
     );
 
+    const result = await response.json();
 
-    // ----------------------------------------
-    // Read VTpass response
-    // ----------------------------------------
+    console.log("Paystack initialize:", {
+      httpStatus: response.status,
+      status: result.status,
+      message: result.message
+    });
 
-    const data = await response.json();
-
-
-    // ----------------------------------------
-    // Successful VTpass transaction
-    // VTpass normally returns code "000"
-    // ----------------------------------------
-
-    if (response.ok && data.code === "000") {
-      return res.status(200).json({
-        success: true,
-        request_id: requestId,
-        vtpass: data
+    if (!response.ok || !result.status) {
+      return res.status(400).json({
+        status: false,
+        message: result.message || "Unable to initialize payment"
       });
     }
 
-
-    // ----------------------------------------
-    // VTpass returned an error/pending response
-    // ----------------------------------------
-
-    return res.status(400).json({
-      success: false,
-      request_id: requestId,
-      message:
-        data.response_description ||
-        "VTpass transaction was not successful",
-      vtpass: data
+    return res.json({
+      status: true,
+      message: "Payment initialized",
+      authorization_url: result.data.authorization_url,
+      access_code: result.data.access_code,
+      reference: result.data.reference
     });
-
-
   } catch (error) {
-
-    // ----------------------------------------
-    // Server / connection error
-    // ----------------------------------------
-
-    console.error(
-      "VTpass purchase error:",
-      error
-    );
+    console.error("Paystack initialization error:", error);
 
     return res.status(500).json({
-      success: false,
-      message: "Unable to connect to VTpass",
-      error: error.message
+      status: false,
+      message: "Payment provider could not be reached"
     });
   }
 });
 
+// =========================
+// PAYSTACK: VERIFY PAYMENT
+// =========================
 
-// ========================================
-// SERVE EZEDATA WEBSITE
-// ========================================
+app.get("/api/paystack/verify/:reference", async (req, res) => {
+  try {
+    const reference = req.params.reference;
 
-app.get("/", (req, res) => {
-  res.sendFile(
-    __dirname + "/public/index.html"
+    if (!PAYSTACK_SECRET_KEY) {
+      return res.status(500).json({
+        status: false,
+        message: "Paystack is not configured"
+      });
+    }
+
+    const response = await fetch(
+      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`
+        }
+      }
+    );
+
+    const result = await response.json();
+
+    console.log("Paystack verification:", {
+      httpStatus: response.status,
+      status: result.status,
+      paymentStatus: result.data?.status
+    });
+
+    if (!response.ok || !result.status) {
+      return res.status(400).json({
+        status: false,
+        message: result.message || "Payment verification failed"
+      });
+    }
+
+    const successful = result.data.status === "success";
+
+    return res.json({
+      status: true,
+      paid: successful,
+      reference: result.data.reference,
+      amount: result.data.amount,
+      currency: result.data.currency,
+      payment_status: result.data.status
+    });
+  } catch (error) {
+    console.error("Paystack verification error:", error);
+
+    return res.status(500).json({
+      status: false,
+      message: "Unable to verify payment"
+    });
+  }
+});
+
+// =========================
+// PAYSTACK CALLBACK
+// =========================
+
+app.get("/payment/callback", (req, res) => {
+  const reference = req.query.reference;
+
+  if (!reference) {
+    return res.redirect("/?payment=failed");
+  }
+
+  res.redirect(
+    `/?payment=success&reference=${encodeURIComponent(reference)}`
   );
 });
 
+// =========================
+// VTPASS PURCHASE
+// =========================
 
-// ========================================
+app.post("/api/vtpass/purchase", async (req, res) => {
+  try {
+    const {
+      request_id,
+      serviceID,
+      billersCode,
+      variation_code,
+      amount,
+      phone
+    } = req.body;
+
+    if (!VTPASS_API_KEY || !VTPASS_SECRET_KEY) {
+      console.error("VTpass credentials are missing");
+
+      return res.status(500).json({
+        status: false,
+        message: "VTpass is not configured"
+      });
+    }
+
+    if (!serviceID || !amount || !phone) {
+      return res.status(400).json({
+        status: false,
+        message: "serviceID, amount and phone are required"
+      });
+    }
+
+    const payload = {
+      request_id:
+        request_id ||
+        `EZEDATA_${Date.now()}_${Math.random()
+          .toString(36)
+          .slice(2, 8)}`,
+      serviceID,
+      amount: Number(amount),
+      phone
+    };
+
+    if (billersCode) {
+      payload.billersCode = billersCode;
+    }
+
+    if (variation_code) {
+      payload.variation_code = variation_code;
+    }
+
+    const response = await fetch(
+      "https://vtpass.com/api/pay",
+      {
+        method: "POST",
+        headers: {
+          "api-key": VTPASS_API_KEY,
+          "secret-key": VTPASS_SECRET_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    const result = await response.json();
+
+    console.log("VTpass response:", {
+      httpStatus: response.status,
+      code: result.code,
+      response_description: result.response_description
+    });
+
+    return res.status(response.ok ? 200 : 400).json(result);
+  } catch (error) {
+    console.error("VTpass purchase error:", error);
+
+    return res.status(500).json({
+      status: false,
+      message: "Unable to connect to VTpass"
+    });
+  }
+});
+
+// =========================
+// FRONTEND FALLBACK
+// =========================
+
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// =========================
 // START SERVER
-// ========================================
+// =========================
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(
-    `EZEDATA server running on port ${PORT}`
-  );
+app.listen(PORT, () => {
+  console.log(`EZEDATA server running on port ${PORT}`);
 });
