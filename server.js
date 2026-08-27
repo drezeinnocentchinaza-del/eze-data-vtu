@@ -1,291 +1,379 @@
 const express = require("express");
-const path = require("path");
+const cors = require("cors");
+require("dotenv").config();
 
 const app = express();
+
 const PORT = process.env.PORT || 10000;
+const VT_PASS_URL =
+  process.env.VTPASS_BASE_URL || "https://sandbox.vtpass.com/api";
 
+app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.static("public"));
 
-// Serve the website
-app.use(express.static(path.join(__dirname, "public")));
-
-const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
-const VTPASS_API_KEY = process.env.VTPASS_API_KEY;
-const VTPASS_SECRET_KEY = process.env.VTPASS_SECRET_KEY;
-
-// =========================
-// HEALTH CHECK
-// =========================
+/*
+====================================================
+HEALTH CHECK
+====================================================
+*/
 
 app.get("/api/health", (req, res) => {
   res.json({
-    status: true,
+    success: true,
     message: "EZEDATA server is running"
   });
 });
 
-// =========================
-// PAYSTACK: INITIALIZE PAYMENT
-// =========================
+/*
+====================================================
+PAYSTACK - INITIALIZE WALLET FUNDING
+====================================================
+*/
 
-app.post("/api/paystack/initialize", async (req, res) => {
+app.post("/api/wallet/fund", async (req, res) => {
   try {
-    const { email, amount } = req.body;
+    const { amount, email } = req.body;
 
-    if (!email || !amount) {
+    if (!amount) {
       return res.status(400).json({
-        status: false,
-        message: "Email and amount are required"
+        success: false,
+        message: "Amount is required"
       });
     }
 
-    if (!PAYSTACK_SECRET_KEY) {
-      console.error("PAYSTACK_SECRET_KEY is missing");
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required"
+      });
+    }
+
+    if (!process.env.PAYSTACK_SECRET_KEY) {
       return res.status(500).json({
-        status: false,
-        message: "Paystack is not configured"
+        success: false,
+        message: "Paystack secret key is not configured"
       });
     }
 
-    const numericAmount = Number(amount);
+    const amountInKobo = Math.round(Number(amount) * 100);
 
-    if (!Number.isFinite(numericAmount) || numericAmount < 100) {
+    if (amountInKobo < 10000) {
       return res.status(400).json({
-        status: false,
-        message: "Minimum payment amount is ₦100"
+        success: false,
+        message: "Minimum funding amount is ₦100"
       });
     }
 
     const reference =
-      "EZEDATA_" +
+      "EZEWALLET_" +
       Date.now() +
       "_" +
-      Math.random().toString(36).slice(2, 8).toUpperCase();
+      Math.floor(Math.random() * 100000);
 
     const response = await fetch(
       "https://api.paystack.co/transaction/initialize",
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          email,
-          amount: Math.round(numericAmount * 100),
+          email: email,
+          amount: amountInKobo,
+          reference: reference,
           currency: "NGN",
-          reference,
-          callback_url: `${req.protocol}://${req.get("host")}/payment/callback`,
+          callback_url:
+            process.env.PAYSTACK_CALLBACK_URL ||
+            "https://ezedata-vtu-platform--ezehchinazs.replit.app/api/paystack/callback",
           metadata: {
-            source: "EZEDATA"
+            purpose: "wallet_funding",
+            email: email,
+            amount: Number(amount)
           }
         })
       }
     );
 
-    const result = await response.json();
+    const data = await response.json();
 
-    console.log("Paystack initialize:", {
-      httpStatus: response.status,
-      status: result.status,
-      message: result.message
-    });
-
-    if (!response.ok || !result.status) {
+    if (!response.ok || !data.status) {
       return res.status(400).json({
-        status: false,
-        message: result.message || "Unable to initialize payment"
+        success: false,
+        message: data.message || "Paystack could not initialize payment",
+        provider_response: data
       });
     }
 
     return res.json({
-      status: true,
+      success: true,
       message: "Payment initialized",
-      authorization_url: result.data.authorization_url,
-      access_code: result.data.access_code,
-      reference: result.data.reference
+      authorization_url: data.data.authorization_url,
+      checkout_url: data.data.authorization_url,
+      access_code: data.data.access_code,
+      reference: data.data.reference
     });
   } catch (error) {
     console.error("Paystack initialization error:", error);
 
     return res.status(500).json({
-      status: false,
-      message: "Payment provider could not be reached"
+      success: false,
+      message: "Payment provider did not respond",
+      error: error.message
     });
   }
 });
 
-// =========================
-// PAYSTACK: VERIFY PAYMENT
-// =========================
+/*
+====================================================
+PAYSTACK - VERIFY TRANSACTION
+====================================================
+*/
 
 app.get("/api/paystack/verify/:reference", async (req, res) => {
   try {
-    const reference = req.params.reference;
+    const { reference } = req.params;
 
-    if (!PAYSTACK_SECRET_KEY) {
+    if (!process.env.PAYSTACK_SECRET_KEY) {
       return res.status(500).json({
-        status: false,
-        message: "Paystack is not configured"
+        success: false,
+        message: "Paystack secret key is not configured"
       });
     }
 
     const response = await fetch(
-      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
+      `https://api.paystack.co/transaction/verify/${encodeURIComponent(
+        reference
+      )}`,
       {
         method: "GET",
         headers: {
-          Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
         }
       }
     );
 
-    const result = await response.json();
+    const data = await response.json();
 
-    console.log("Paystack verification:", {
-      httpStatus: response.status,
-      status: result.status,
-      paymentStatus: result.data?.status
-    });
-
-    if (!response.ok || !result.status) {
+    if (!response.ok || !data.status) {
       return res.status(400).json({
-        status: false,
-        message: result.message || "Payment verification failed"
+        success: false,
+        message: data.message || "Could not verify payment",
+        provider_response: data
       });
     }
 
-    const successful = result.data.status === "success";
-
     return res.json({
-      status: true,
-      paid: successful,
-      reference: result.data.reference,
-      amount: result.data.amount,
-      currency: result.data.currency,
-      payment_status: result.data.status
+      success: true,
+      status: data.data.status,
+      reference: data.data.reference,
+      amount: data.data.amount / 100,
+      email: data.data.customer?.email || null,
+      provider_response: data.data
     });
   } catch (error) {
     console.error("Paystack verification error:", error);
 
     return res.status(500).json({
-      status: false,
-      message: "Unable to verify payment"
+      success: false,
+      message: "Unable to verify payment",
+      error: error.message
     });
   }
 });
 
-// =========================
-// PAYSTACK CALLBACK
-// =========================
+/*
+====================================================
+PAYSTACK CALLBACK
+====================================================
+*/
 
-app.get("/payment/callback", (req, res) => {
-  const reference = req.query.reference;
+app.get("/api/paystack/callback", async (req, res) => {
+  try {
+    const { reference } = req.query;
 
-  if (!reference) {
-    return res.redirect("/?payment=failed");
+    if (!reference) {
+      return res.status(400).send("Payment reference is missing.");
+    }
+
+    const response = await fetch(
+      `https://api.paystack.co/transaction/verify/${encodeURIComponent(
+        reference
+      )}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    if (
+      data.status &&
+      data.data &&
+      data.data.status === "success"
+    ) {
+      return res.send(`
+        <html>
+          <head>
+            <title>EZEDATA Payment Successful</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+          </head>
+          <body style="font-family:Arial;text-align:center;padding:50px">
+            <h1>Payment Successful</h1>
+            <p>Your payment was successful.</p>
+            <p>Reference: ${reference}</p>
+            <p>You can return to EZEDATA.</p>
+          </body>
+        </html>
+      `);
+    }
+
+    return res.send(`
+      <html>
+        <head>
+          <title>EZEDATA Payment</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+        </head>
+        <body style="font-family:Arial;text-align:center;padding:50px">
+          <h1>Payment Not Completed</h1>
+          <p>Your payment could not be confirmed as successful.</p>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error("Callback error:", error);
+    return res.status(500).send("Unable to verify payment.");
   }
-
-  res.redirect(
-    `/?payment=success&reference=${encodeURIComponent(reference)}`
-  );
 });
 
-// =========================
-// VTPASS PURCHASE
-// =========================
+/*
+====================================================
+VTPASS PURCHASE
+====================================================
+*/
 
 app.post("/api/vtpass/purchase", async (req, res) => {
   try {
     const {
-      request_id,
       serviceID,
-      billersCode,
-      variation_code,
       amount,
-      phone
+      phone,
+      variation_code,
+      billersCode
     } = req.body;
 
-    if (!VTPASS_API_KEY || !VTPASS_SECRET_KEY) {
-      console.error("VTpass credentials are missing");
-
-      return res.status(500).json({
-        status: false,
-        message: "VTpass is not configured"
-      });
-    }
-
-    if (!serviceID || !amount || !phone) {
+    if (!serviceID) {
       return res.status(400).json({
-        status: false,
-        message: "serviceID, amount and phone are required"
+        success: false,
+        message: "serviceID is required"
       });
     }
+
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: "phone is required"
+      });
+    }
+
+    if (!amount && !variation_code) {
+      return res.status(400).json({
+        success: false,
+        message: "amount or variation_code is required"
+      });
+    }
+
+    if (
+      !process.env.VTPASS_API_KEY ||
+      !process.env.VTPASS_SECRET_KEY
+    ) {
+      return res.status(500).json({
+        success: false,
+        message: "VTpass API credentials are not configured"
+      });
+    }
+
+    const requestId =
+      "EZEDATA" +
+      Date.now() +
+      Math.floor(Math.random() * 1000);
 
     const payload = {
-      request_id:
-        request_id ||
-        `EZEDATA_${Date.now()}_${Math.random()
-          .toString(36)
-          .slice(2, 8)}`,
-      serviceID,
-      amount: Number(amount),
-      phone
+      request_id: requestId,
+      serviceID: serviceID,
+      phone: phone
     };
 
-    if (billersCode) {
-      payload.billersCode = billersCode;
+    if (amount) {
+      payload.amount = Number(amount);
     }
 
     if (variation_code) {
       payload.variation_code = variation_code;
     }
 
-    const response = await fetch(
-      "https://vtpass.com/api/pay",
-      {
-        method: "POST",
-        headers: {
-          "api-key": VTPASS_API_KEY,
-          "secret-key": VTPASS_SECRET_KEY,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      }
-    );
+    if (billersCode) {
+      payload.billersCode = billersCode;
+    }
 
-    const result = await response.json();
-
-    console.log("VTpass response:", {
-      httpStatus: response.status,
-      code: result.code,
-      response_description: result.response_description
+    const response = await fetch(`${VT_PASS_URL}/pay`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": process.env.VTPASS_API_KEY,
+        "secret-key": process.env.VTPASS_SECRET_KEY
+      },
+      body: JSON.stringify(payload)
     });
 
-    return res.status(response.ok ? 200 : 400).json(result);
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(400).json({
+        success: false,
+        message: "VTpass rejected the request",
+        provider_response: data
+      });
+    }
+
+    if (data.code === "000") {
+      return res.json({
+        success: true,
+        message: "Purchase successful",
+        request_id: requestId,
+        provider_response: data
+      });
+    }
+
+    return res.status(400).json({
+      success: false,
+      message:
+        data.response_description ||
+        data.message ||
+        "Purchase not completed",
+      request_id: requestId,
+      provider_response: data
+    });
   } catch (error) {
     console.error("VTpass purchase error:", error);
 
     return res.status(500).json({
-      status: false,
-      message: "Unable to connect to VTpass"
+      success: false,
+      message: "VTpass provider did not respond",
+      error: error.message
     });
   }
 });
 
-// =========================
-// FRONTEND FALLBACK
-// =========================
+/*
+====================================================
+START SERVER
+====================================================
+*/
 
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
-
-// =========================
-// START SERVER
-// =========================
-
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`EZEDATA server running on port ${PORT}`);
 });
